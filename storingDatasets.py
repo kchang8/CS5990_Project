@@ -5,38 +5,65 @@ import pandas as pd
 trainingAppList = []    # list that holds all the training app details
 testingAppList = []     # list that holds all the test app details
 
+tempTrainDescList = []
+tempTestDescList = []
+tempTrainReviewList = []
+tempTestReviewList = []
+
+allTrainAppDetails = []
+allTrainReviews = []
+
+allTestAppDetails = []
+allTestReviews = []
+
 # gets all app ids
 app_ids = get_available_apps_id(steam_key)
-appIdTraining = app_ids[:50]
-print("id 42: " + appIdTraining[42])
-appIdTesting = app_ids[50:100]
+appIdTraining = app_ids[20:30]
+appIdTesting = app_ids[30:40]
 # print(appIdTesting)
 
 # prev = get_data_keys((get_app_details(app_ids[0])))
 # print(prev)
 
-# steam_appid, detailed_description, genre
+# steam_appid, detailed_description
 # gets TRAINING app id details
 for data in range(0, len(appIdTraining)):
-    trainingAppList.append(get_app_details(appIdTraining[data]))
+    print("Training id: " + str(appIdTraining[data]))
+    allTrainAppDetails.append(get_app_details(appIdTraining[data]))
+    allTrainReviews.append(get_reviews(appIdTraining[data]))
     # if k != prev:
     #   print(k)
-
-# gets TESTING app id details
+#
+# # gets TESTING app id details
 for data in range(0, len(appIdTesting)):
-    testingAppList.append(get_app_details(appIdTesting[data]))
+    print("Testing id: " + str(appIdTesting[data]))
+    allTestAppDetails.append(get_app_details(appIdTesting[data]))
+    allTestReviews.append(get_reviews(appIdTesting[data]))
+
+for i in allTrainAppDetails:
+    if i is not None:
+        tempTrainDescList.append(i.get('Detailed Description'))
+for i in allTrainReviews:
+    if i is not None:
+        tempTrainReviewList.append(i.get('Review'))
+
+for i in allTestAppDetails:
+    if i is not None:
+        tempTestDescList.append(i.get('Detailed Description'))
+for i in allTrainReviews:
+    if i is not None:
+        tempTestReviewList.append(i.get('Review'))
+
+trainingAppList = list(zip(tempTrainDescList, tempTrainReviewList))
+testingAppList = list(zip(tempTestDescList, tempTestReviewList))
 
 
 # writing to training csv files
-csvTrainColumns = ['Name', 'Detailed Description', 'Genres']
-trainingData = pd.DataFrame.from_dict(trainingAppList)
-trainingData.to_csv('trainingDataset.csv', index=False, columns=csvTrainColumns)
+csvTrainColumns = ['GameDescription', 'Review']
+trainingData = pd.DataFrame(trainingAppList, columns=csvTrainColumns)
+trainingData.to_csv('trainingDataset.csv', index=False)
 
 # writing to testing csv files
-csvTestColumns = ['Name', 'Detailed Description', 'Genres']
-testingData = pd.DataFrame.from_dict(testingAppList)
-testingData.to_csv('testingDataset.csv', index=False, columns=csvTestColumns)
-
-# for i in range (0, len(app_ids[:10])):
-#   reviews = get_reviews(app_ids[i])
-#   print(reviews)
+csvTestColumns = ['GameDescription', 'Review']
+testingData = pd.DataFrame(testingAppList, columns=csvTestColumns)
+testingData.to_csv('testingDataset.csv', index=False)

@@ -1,176 +1,39 @@
-from datasets import *
-from transformers import *
-from tokenizers import *
-import os
-import json
+import numpy as np
+import pandas as pd
+import ktrain
+from ktrain import text
 
-# would have to change this for our training dataset later
-# possibly have to create and load it to the hugging face transformer library
-dataset = load_dataset("trainingDataset", split="train")
+data_train = pd.read_csv('datasets/finalCleanTrainingDataset.csv', dtype = str)
+data_test = pd.read_csv('datasets/finalTestingDataset.csv', dtype = str)
 
-# split the dataset into training and testing
-d = dataset.train_test_split(test_size=0.1)
-d["train"], d["test"]
+(X_train, y_train), (X_test, y_test), preprocess = text.texts_from_df(train_df = data_train,
+                    text_column = 'GameDescription',
+                    label_columns = 'Review',
+                    val_df = data_test,
+                    maxlen = 400,
+                    preprocess_mode = 'bert')
 
-# if you have more than one training file, you can add them like this
-files = ["trainingDataset.csv"]    # etc
-dataset = load_dataset("text", data_files=files, split="train")
+# prints out total rows of training data
+X_train[0].shape
 
-# if you want to train the tokenizer from scratch (especially if you have custom
-# dataset loaded as datasets object), then run this cell to save it as files
-# but if you already have your custom data as text files, there is no point using this
-def dataset_to_text(dataset, output_filename="data.txt"):
-  """Utility function to save dataset text to disk,
-  useful for using the texts to train the tokenizer
-  (as the tokenizer accepts files)"""
-  with open(output_filename, "w") as f:
-    for t in dataset["text"]:
-      print(t, file=f)
+model = text.text_classifier(name='bert',
+                             train_data = (X_train, y_train),
+                             preproc = preprocess)
 
-# save the training set to train.txt
-dataset_to_text(d["train"], "train.txt")
-# save the testing set to test.txt
-dataset_to_text(d["test"], "test.txt")
+# get learning rate
+learner = ktrain.get_learner(model = model,
+                             train_data = (X_train, y_train),
+                             val_data = (X_test, y_test),
+                             batch_size = 6)
 
-special_tokens = [
-  "[PAD]", "[UNK]", "[CLS]", "[SEP]", "[MASK]", "<S>", "<T>"
-]
-# if you want to train the tokenizer on both sets
-# files = ["train.txt", "test.txt"]
-# training the tokenizer on the training set
-files = ["train.txt"]
-# 30,522 vocab is BERT's default vocab size, feel free to tweak
-vocab_size = 30_522
-# maximum sequence length, lowering will result to faster training (when increasing batch size)
-max_length = 512
-# whether to truncate
-truncate_longer_samples = True
+# optimal learning rate for this model is 2e-5
+learner.fit_onecycle(lr = 2e-5, epochs = 1)
 
+predictor = ktrain.get_predictor(learner.model, preprocess)
 
-# Tokenizing
-# initialize the WordPiece tokenizer
-tokenizer = BertWordPieceTokenizer()
-# train the tokenizer
-tokenizer.train(files=files, vocab_size=vocab_size, special_tokens=special_tokens)
-# enable truncation up to the maximum 512 tokens
-tokenizer.enable_truncation(max_length=max_length)
+# sample test data
+data = ['Phoenix Wright: Ace Attorney is a visual novel adventure game where the player takes the role of Phoenix Wright, a rookie defense attorney, and attempts to defend their clients in five cases. These cases are played in a specific order. After finishing them, the player can re-play them in any order.']
 
-
-model_path = "pretrained-bert"
-# make the directory if not already there
-if not os.path.isdir(model_path):
-  os.mkdir(model_path)
-# save the tokenizer
-tokenizer.save_model(model_path)
-# dumping some of the tokenizer config to config file,
-# including special tokens, whether to lower case and the maximum sequence length
-with open(os.path.join(model_path, "config.json"), "w") as f:
-  tokenizer_cfg = {
-      "do_lower_case": True,
-      "unk_token": "[UNK]",
-      "sep_token": "[SEP]",
-      "pad_token": "[PAD]",
-      "cls_token": "[CLS]",
-      "mask_token": "[MASK]",
-      "model_max_length": max_length,
-      "max_len": max_length,
-  }
-  json.dump(tokenizer_cfg, f)
-
-
-# when the tokenizer is trained and configured, load it as BertTokenizerFast
-tokenizer = BertTokenizerFast.from_pretrained(model_path)
-def encode_with_truncation(examples):
-  """Mapping function to tokenize the sentences passed with truncation"""
-  return tokenizer(examples["text"], truncation=True, padding="max_length", max_length=max_length, return_special_tokens_mask=True)
-
-def encode_without_truncation(examples):
-  """Mapping function to tokenize the sentences passed without truncation"""
-  return tokenizer(examples["text"], return_special_tokens_mask=True)
-
-# the encode function will depend on the truncate_longer_samples variable
-encode = encode_with_truncation if truncate_longer_samples else encode_without_truncation
-
-# tokenizing the train dataset
-train_dataset = d["train"].map(encode, batched=True)
-# tokenizing the testing dataset
-test_dataset = d["test"].map(encode, batched=True)
-if truncate_longer_samples:
-  # remove other columns and set input_ids and attention_mask as
-  train_dataset.set_format(type="torch", columns=["input_ids", "attention_mask"])
-  test_dataset.set_format(type="torch", columns=["input_ids", "attention_mask"])
-else:
-  test_dataset.set_format(columns=["input_ids", "attention_mask", "special_tokens_mask"])
-  train_dataset.set_format(columns=["input_ids", "attention_mask", "special_tokens_mask"])
-train_dataset, test_dataset
-
-# Main data processing function that will concatenate all texts from our dataset and generate chunks of
-# max_seq_length.
-def group_texts(examples):
-    # Concatenate all texts.
-    concatenated_examples = {k: sum(examples[k], []) for k in examples.keys()}
-    total_length = len(concatenated_examples[list(examples.keys())[0]])
-    # We drop the small remainder, we could add padding if the model supported it instead of this drop, you can
-    # customize this part to your needs.
-    if total_length >= max_length:
-        total_length = (total_length // max_length) * max_length
-    # Split by chunks of max_len.
-    result = {
-        k: [t[i : i + max_length] for i in range(0, total_length, max_length)]
-        for k, t in concatenated_examples.items()
-    }
-    return result
-# Note that with `batched=True`, this map processes 1,000 texts together, so group_texts throws away a
-# remainder for each of those groups of 1,000 texts. You can adjust that batch_size here but a higher value
-# might be slower to preprocess.
-#
-# To speed up this part, we use multiprocessing. See the documentation of the map method for more information:
-# https://huggingface.co/docs/datasets/package_reference/main_classes.html#datasets.Dataset.map
-if not truncate_longer_samples:
-  train_dataset = train_dataset.map(group_texts, batched=True, batch_size=2_000,
-                                    desc=f"Grouping texts in chunks of {max_length}")
-  test_dataset = test_dataset.map(group_texts, batched=True, batch_size=2_000,
-                                  num_proc=4, desc=f"Grouping texts in chunks of {max_length}")
-
-# initialize the model with the config
-model_config = BertConfig(vocab_size=vocab_size, max_position_embeddings=max_length)
-model = BertForMaskedLM(config=model_config)
-
-# initialize the data collator, randomly masking 20% (default is 15%) of the tokens for the Masked Language
-# Modeling (MLM) task
-data_collator = DataCollatorForLanguageModeling(
-    tokenizer=tokenizer, mlm=True, mlm_probability=0.2
-)
-
-training_args = TrainingArguments(
-    output_dir=model_path,          # output directory to where save model checkpoint
-    evaluation_strategy="steps",    # evaluate each `logging_steps` steps
-    overwrite_output_dir=True,
-    num_train_epochs=10,            # number of training epochs, feel free to tweak
-    per_device_train_batch_size=10, # the training batch size, put it as high as your GPU memory fits
-    gradient_accumulation_steps=8,  # accumulating the gradients before updating the weights
-    per_device_eval_batch_size=64,  # evaluation batch size
-    logging_steps=500,             # evaluate, log and save model checkpoints every 1000 step
-    save_steps=500,
-    # load_best_model_at_end=True,  # whether to load the best model (in terms of loss) at the end of training
-    # save_total_limit=3,           # whether you don't have much space so you let only 3 model weights saved in the disk
-)
-
-# initialize the trainer and pass everything to it
-trainer = Trainer(
-    model=model,
-    args=training_args,
-    data_collator=data_collator,
-    train_dataset=train_dataset,
-    eval_dataset=test_dataset,
-)
-
-# train the model
-trainer.train()
-
-# load the model checkpoint
-model = BertForMaskedLM.from_pretrained(os.path.join(model_path, "checkpoint-10000"))
-# load the tokenizer
-tokenizer = BertTokenizerFast.from_pretrained(model_path)
-
-fill_mask = pipeline("fill-mask", model=model, tokenizer=tokenizer)
+# prints out prediction of sample data
+prediction = predictor.predict(data)
+print(prediction)

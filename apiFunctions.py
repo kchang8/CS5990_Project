@@ -4,9 +4,10 @@ import time
 import pandas as pd
 import string
 import steamspypi
+import re
+from textblob import TextBlob
 
 steam_key = "4C5D8272E8335F6CDCCE5693E6E8F152"
-
 # data_request = dict()
 # data_request['request'] = 'all'
 # data_request['page'] = '0'
@@ -19,7 +20,7 @@ def get_available_apps_id(steam_key):
   response = requests.get("https://api.steampowered.com/ISteamApps/GetAppList/v2/?key={0}&format=json?json=1".format(steam_key)).json()
 
   # gets the first 1000 responses, can chnage
-  list_response = response['applist']['apps'][:4000]
+  list_response = response['applist']['apps'][:2000]
   result = []
   i = 0
   j = len(list_response) - 1
@@ -41,36 +42,47 @@ def get_available_apps_id(steam_key):
   return result
 
 def get_app_details(appid):
-  res = requests.get("https://store.steampowered.com/api/appdetails?appids={0}".format(appid))
-  data = res.json()
-
-  if data is None:
-    return None
-
-  if data[appid]['success'] is True:
-      try:
-        value = data[appid]['data']
-
-        genreList = []
-        name = value['name']
-        description = value['detailed_description']
-        genre = value['genres']
-
-        for x in genre:
-            genreList.append(x['description'])
+    try:
+        res = requests.get("https://store.steampowered.com/api/appdetails?appids={0}".format(appid))
+        data = res.json()
     except KeyError:
-        print(appid)
-        name = 'None'
-        description = 'None'
-        genreList.append('None')
+        print("error ", res)
 
-    return {
-        'Name': name,
-        'Detailed Description': description,
-        'Genres': genreList,
-    }
+    if data is None:
+        return None
 
-  return data[appid]['data'] if data[appid]['success'] is True else None
+    if data[appid]['success'] is True:
+        desLang, description = '', ''
+        try:
+            value = data[appid]['data']
+
+            # # getting name of game
+            # if len(value['name']) >= 3:
+            #     nameBlob = TextBlob(value['name'])
+            #     nameLang = nameBlob.detect_language()
+            # if nameLang == 'en':
+            #     name = value['name']
+
+            if len(value['detailed_description']) >= 3:
+                desBlob = TextBlob(value['detailed_description'])
+                desLang = desBlob.detect_language()
+                if desLang == 'en':
+                    description = value['detailed_description']
+                else:
+                    description = 'None'
+
+            # removes all html tags from description
+            CLEANR = re.compile('<.*?>')
+            cleanDescription = re.sub(CLEANR, '', description)
+        except KeyError:
+            print("Get App Detail Error: " + appid)
+            cleanDescription = 'None'
+
+        return {
+            'Detailed Description': cleanDescription,
+        }
+
+    return data[appid]['data'] if data[appid]['success'] is True else None
 
 def get_data_keys(input_data):
   if input_data is None:
@@ -80,7 +92,26 @@ def get_data_keys(input_data):
 
 def get_reviews(appid):
   res = requests.get("https://store.steampowered.com/appreviews/{0}?json=1".format(appid))
-  return res.json()
+  reviewData = res.json()
+
+  if reviewData is None:
+    return None
+
+  if reviewData['success'] is 1:
+      try:
+        value = reviewData['query_summary']
+
+        if value['total_positive'] >= value['total_negative']:
+            review = 'pos'
+        else:
+            review = 'neg'
+      except KeyError:
+        print("Get Review Error: " + value)
+        review = 'none'
+
+      return {
+        'Review': review
+      }
 
 def get_n_reviews(appid, n=50):
   # follow https://andrew-muller.medium.com/scraping-steam-user-reviews-9a43f9e38c92
